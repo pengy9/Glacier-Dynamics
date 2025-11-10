@@ -1,0 +1,97 @@
+clc
+clear 
+% % Ac_2020_2025.tif		1		33.7351		-10.2995659		    1
+% % De_2025_2025.tif		1		43.8363		-170.4231278		1
+%%入射角******  方位角******************
+A_in=39.53;   A_head=-12.63;                        %%%轨道1**************修改
+D_in=39.60;   D_head=-167.38;                       %%%轨道2**************修改
+
+%%***********形变数据,输入数据必须覆盖范围经纬度一致****************************
+% %*******不一致可以用arcgis裁剪*******************************************
+[SEN_55,R]= geotiffread('./A_R1_PointToRaster30.tif');             %%**************修改
+info = geotiffinfo('./A_R1_PointToRaster30.tif');
+index=find(abs(SEN_55)>1e5);SEN_55(index)=0;
+index=find(isnan(SEN_55));SEN_55(index)=0;
+SEN_62= geotiffread('./D_R1_PointToRaster30.tif');                 %%**************修改
+index=find(abs(SEN_62)>1e5);SEN_62(index)=0;
+index=find(isnan(SEN_62));SEN_62(index)=0;
+SEN_62=imresize(SEN_62,[size(SEN_55,1),size(SEN_55,2)]);
+%%**********坡向数据，输入数据必须和形变图覆盖范围经纬度一致*************************************
+% %*******不一致可以用arcgis裁剪*******************************************
+asp= geotiffread('./Extract_poxi.tif');             %%**************修改
+index=find(abs(asp)>1e5);asp(index)=0;
+index=find(isnan(asp));asp(index)=0;
+asp=imresize(asp,[size(SEN_55,1),size(SEN_55,2)]);
+
+dem= geotiffread('./GR6dem1.tif');             %%**************修改
+index=find(abs(dem)>1e4);dem(index)=0;
+index=find(isnan(dem));dem(index)=0;
+dem=imresize(dem,[size(SEN_55,1),size(SEN_55,2)]);
+% aspect=double(aspect);
+% aspect_mf=FNLM(aspect,6,2,25);%%%对坡向滤波增加光滑度
+%aspect_mf=aspect%%%如果不想进行滤波，可以注释上一行，取消这一行注释
+figure(1)
+subplot(1,3,1),imagesc(dem),title('DEM');
+subplot(1,3,2),imagesc(SEN_55),title('LOS_Ac');
+subplot(1,3,3),imagesc(SEN_62),title('LOS_De');
+%subplot(1,2,1),imagesc(SEN_55),title('LOS_A');
+%subplot(1,2,2),imagesc(SEN_62),title('LOS_D');
+%%绘制图篇
+% imagesc(aspect)
+index1=find(SEN_55.*SEN_62==0|abs(SEN_55.*SEN_62)>1000000);
+SEN_55(index1)=0;
+SEN_62(index1)=0;
+%%三维分
+%% 三维分解
+%%设计矩阵
+BB=[sind(A_head)*sind(A_in),-cosd(A_head)*sind(A_in),cosd(A_in);...
+    sind(D_head)*sind(D_in),-cosd(D_head)*sind(D_in),cosd(D_in);...
+   ];
+%%三维分解
+[row,col]=size(SEN_55);
+Three_D=zeros(row,col,3);
+for ii=1:row
+    disp(['Finished:',num2str(ii),'/',num2str(row)])
+    for jj=1:col
+        try
+        asp0=asp(ii,jj);
+        C=[-1 cosd(asp0)*cosd(90-asp0) 0];
+        AA=[BB;C];
+       if cond(AA,2)<100
+        LOS=[SEN_55(ii,jj);SEN_62(ii,jj);0]; %%观测矩阵
+        X=pinv( AA)*LOS;                     %%三维形变求解
+        Three_D(ii,jj,:)=X;
+       end
+        catch
+            continue;
+        end
+    end
+end
+%%绘图
+figure(2)
+subplot(2,3,1),imagesc(dem),title('DEM');
+subplot(2,3,2),imagesc(SEN_55),title('LOS_A');
+subplot(2,3,3),imagesc(SEN_62),title('LOS_D');
+subplot(2,3,4),imagesc( Three_D(:,:,1) );title('NS');
+subplot(2,3,5),imagesc(Three_D(:,:,2) );title('EW');
+subplot(2,3,6),imagesc(Three_D(:,:,3) );title('UD');
+
+figure()
+
+plot(1),imagesc(Three_D(:,:,3) );title('UD');
+%%
+threed_path='./3D_deformation_GR1/';mkdir('./3D_deformation_GR1/');
+geoTags = info.GeoTIFFTags.GeoKeyDirectoryTag;
+tiffTags = struct('TileLength',1024,'TileWidth',1024);
+geotiffwrite([threed_path,'NS.tif'],Three_D(:,:,1),R,'TiffType','bigtiff', ...
+                             'GeoKeyDirectoryTag',geoTags, ...
+                             'TiffTags',tiffTags)
+geotiffwrite([threed_path,'UD.tif'],Three_D(:,:,3),R,'TiffType','bigtiff', ...
+                             'GeoKeyDirectoryTag',geoTags, ...
+                             'TiffTags',tiffTags)
+geotiffwrite([threed_path,'EW.tif'],Three_D(:,:,2),R,'TiffType','bigtiff', ...
+                             'GeoKeyDirectoryTag',geoTags, ...
+                             'TiffTags',tiffTags)
+geotiffwrite([threed_path,'NS.tif'],Three_D(:,:,1),R);
+geotiffwrite([threed_path,'UD.tif'],Three_D(:,:,3),R);
+geotiffwrite([threed_path,'EW.tif'],Three_D(:,:,2),R);
